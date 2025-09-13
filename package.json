@@ -1,0 +1,57 @@
+{
+  "name": "sudoku-zkp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "scripts": {
+    "sudoku-zkp":"concurrently \"ganache-cli\" \"npm run dev\"",
+    "setup": "npm run compile && npm run powersoftau && npm run setup:circuit && npm run export:vk",
+    "prebuild": "if not exist build mkdir build",
+    "postbuild": "node scripts/validate-build.js",
+    "compile": "npm run prebuild && circom ./circuits/sudoku.circom --r1cs --wasm --sym -o ./build",
+    "powersoftau": "snarkjs powersoftau new bn128 14 ./build/pot14_0000.ptau -v && snarkjs powersoftau contribute ./build/pot14_0000.ptau ./build/pot14_0001.ptau --name=anon -v && snarkjs powersoftau prepare phase2 ./build/pot14_0001.ptau ./build/pot14_final.ptau -v",
+    "setup:circuit": "snarkjs groth16 setup ./build/sudoku.r1cs ./build/pot14_final.ptau ./build/sudoku_0000.zkey",
+    "export:vk": "snarkjs zkey export verificationkey ./build/sudoku_0000.zkey ./build/verification_key.json",
+    "witness": "node ./build/sudoku_js/generate_witness.js ./build/sudoku_js/sudoku.wasm ./input/input.json ./build/witness.wtns",
+    "prove": "snarkjs groth16 prove ./build/sudoku_0000.zkey ./build/witness.wtns ./build/proof.json ./build/public.json",
+    "verify": "snarkjs groth16 verify ./build/verification_key.json ./build/public.json ./build/proof.json",
+    "verifier:sol": "snarkjs zkey export solidityverifier ./build/sudoku_0000.zkey ./contracts/Verifier.sol",
+    "truffle:compile": "truffle compile --config truffle-config.js",
+    "truffle:migrate": "truffle migrate --config truffle-config.js",
+    "truffle:test": "truffle test --config truffle-config.js",
+    "clean": "rimraf build && rimraf client/build",
+    "client": "cd client && npm start",
+    "server": "node server/index.js",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "build:all": "npm run clean && npm run setup && npm run truffle:compile",
+    "test:circuit": "npm run witness && npm run prove && npm run verify",
+    "deploy": "npm run truffle:migrate",
+    "start": "npm run server",
+    "check-deps": "node scripts/update-dependencies.js",
+    "update-deps": "npm update && cd client && npm update && cd ..",
+    "test-web3": "node scripts/test-web3.js"
+  },
+  "dependencies": {
+    "circomlib": "^2.0.5",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^4.18.2",
+    "express-rate-limit": "^8.1.0",
+    "helmet": "^8.1.0",
+    "validator": "^13.15.15",
+    "web3": "^4.16.0"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "^5.4.0",
+    "concurrently": "^9.1.0",
+    "rimraf": "^6.0.1",
+    "snarkjs": "^0.7.5",
+    "truffle": "^5.11.5",
+    "nodemon": "^3.1.9",
+    "cross-env": "^7.0.3"
+  }
+}
