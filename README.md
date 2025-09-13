@@ -1,103 +1,164 @@
 # Sudoku Zero-Knowledge Proof (zk-SNARK) Demo
 
-This project implements a verifiable Sudoku solver using a zk-SNARK circuit written in Circom. A prover can show knowledge of a valid Sudoku solution without revealing the solution itself.
+This project is a complete, end‑to‑end demo that lets anyone play Sudoku and prove “I solved it correctly” without revealing the solution. It combines:
 
-## Core Idea
-Public inputs:
-- `unsolved[81]` – the original puzzle (0 for blanks)
-- `clueFlags[81]` – 1 where a clue exists, else 0
+- A Circom zk‑SNARK circuit that enforces Sudoku rules.
+- A web client that generates proofs locally in the browser.
+- A Node/Express API for puzzle generation and proof preparation.
+- Solidity smart contracts to verify proofs on‑chain and store a record.
 
-Private inputs:
-- `solved[81]` – the full solved grid
-- Inverses for pairwise inequality constraints (handled implicitly by the witness generator)
+Whether you are non‑technical and just want to try a privacy‑preserving Sudoku, or a developer who wants to learn how Circom, snarkjs, Web3, and Solidity fit together—this README walks you through everything.
+
+## What you can do
+- Solve an auto‑generated Sudoku with selectable difficulty.
+- Generate a zero‑knowledge proof in the browser that your solution is valid.
+- Submit the proof to a blockchain smart contract for verification and permanent recording.
+
+## How it works (plain English)
+1. The server creates a Sudoku puzzle and also knows its true solution. You solve it in the UI.
+2. The zk circuit checks three things without revealing your solution:
+   - Each row has numbers 1–9 exactly once.
+   - Each column has numbers 1–9 exactly once.
+   - Each 3×3 box has numbers 1–9 exactly once.
+   It also checks that wherever the puzzle originally had a number (a “clue”), your solution matches it.
+3. Your browser generates a proof that these checks passed. The proof hides your solution.
+4. The proof is sent to a smart contract that verifies it on‑chain. If valid, the contract stores a record that the puzzle was solved—no solution is revealed.
+
+## How it works (technical)
+Circuit public inputs (visible on‑chain):
+- `unsolved[81]` – the puzzle grid flattened (0 for blanks)
+- `clueFlags[81]` – 1 if a cell is a clue, else 0
+
+Circuit private witness (kept off‑chain):
+- `solved[81]` – the complete correct solution
 
 Constraints enforce:
-1. Each solved cell is in [1,9] via (x-1)…(x-9)=0
-2. Clue cells match original puzzle where `clueFlags[i]==1`
-3. Rows: sum=45 and sum of squares=285 (implies permutation of 1..9)
-4. Columns: same invariants
-5. 3×3 boxes: same invariants
-6. `clueFlags` correctness & boolean validity
+1. Range: every `solved[i] ∈ {1..9}` using the polynomial (x−1)…(x−9)=0.
+2. Clues: `(solved[i] − unsolved[i]) * clueFlags[i] == 0` and `clueFlags[i] ∈ {0,1}`.
+3. Rows/Columns/Boxes each have sum=45 and sum of squares=285 (uniqueness of 1..9).
+
+The client uses `snarkjs.groth16.fullProve` with `sudoku.wasm` and `sudoku.zkey` to produce `proof` and `publicSignals` (162 values: 81 `unsolved` + 81 `clueFlags`). The backend optionally helps prepare inputs and provides blockchain helpers. The contract `Groth16Verifier` verifies the proof; `SudokuVerifierConsumer` validates that public signals match the provided puzzle, computes a hash key, and stores the record.
+
+## Architecture
+```
+client/ (React UI) → generates witness & proof locally
+   ↕ fetches
+server/ (Express API) → generates puzzles, validates format, optional helpers
+   ↕ web3
+contracts/ (Solidity) → on‑chain verification and storage
+circuits/ (Circom) → Sudoku rules as constraints
+build/ → compiled artifacts (R1CS, zkey, wasm, verification key, proofs)
+```
+
+See folder READMEs for details: `client/README.md`, `server/README.md`, `contracts/README.md`, `circuits/README.md`, `build/README.md`.
 
 ## Prerequisites
-- Node.js (>=18 recommended)
-- Install globally (recommended):
+- Node.js 18+
+- npm
+- Optional CLI tools for local circuit work: `circom`, `snarkjs`
+
+Install global CLIs (optional for contributors):
 ```bash
-npm install -g circom@latest snarkjs@latest
+npm install -g circom snarkjs
 ```
 
-## Install Dependencies
+## Quick start (local)
+1) Install dependencies
 ```bash
 npm install
+cd client && npm install
 ```
 
-## Generate Sample Input
+2) Start backend API (default http://localhost:5000)
 ```bash
-node scripts/makeInput.js
+npm run server
 ```
 
-## Compile Circuit & Perform Setup
+3) Start web client (default http://localhost:3000)
 ```bash
-npm run setup   # compiles + Powers of Tau + circuit setup + export vk
+cd client
+npm start
 ```
 
-Outputs go to `build/`:
-- `sudoku.r1cs` – constraint system
-- `sudoku_js/` – WASM & witness generator
-- `pot14_*` – Powers of Tau artifacts
-- `sudoku_0000.zkey` – proving key
-- `verification_key.json` – verification key
+4) In the browser
+- Pick a difficulty, get a puzzle.
+- Fill in the grid or click “Auto‑Fill (Testing)” to use the server’s solution.
+- Click “Generate Witness”, then “Generate ZK Proof”, then “Submit to Blockchain”.
 
-## Create Witness
-```bash
-npm run witness
-```
-Produces: `build/witness.wtns`
+Note: On‑chain submission requires a running blockchain and deployed contracts. See “Blockchain & contracts” below.
 
-## Generate Proof
-```bash
-npm run prove
-```
-Produces: `build/proof.json`, `build/public.json`
+## Blockchain & contracts
+This project uses a standard Groth16 verifier (`contracts/Verifier.sol`, autogenerated by snarkjs) and a wrapper `contracts/SudokuVerifierConsumer.sol` that:
+- Checks `publicSignals` match the provided `unsolved` and `clueFlags`.
+- Calls the verifier to validate the proof.
+- Computes a unique key `keccak256(a,b,c,puzzleHash)` and stores a record.
 
-## Verify Proof
-```bash
-npm run verify
-```
-Should output `OK`.
-
-## Export Solidity Verifier
-```bash
-npm run verifier:sol
-```
-Outputs `contracts/Verifier.sol` (create `contracts/` directory if needed).
-
-## Deploy On Local EVM (Truffle)
-Start a local chain (e.g. `ganache --chain.hardfork istanbul` or Ganache GUI) then:
+Local develop/deploy with Truffle:
 ```bash
 npm run truffle:compile
 npm run truffle:migrate
-```
-This deploys `Verifier` and `SudokuVerifierConsumer`. To run tests:
-```bash
 npm run truffle:test
 ```
-Submit proofs by calling `submitProof` on `SudokuVerifierConsumer` with the arrays from `snarkjs generatecall` (after producing a proof). A helper script may be added later.
 
-## Modify Puzzle
-Edit `scripts/makeInput.js` with a new puzzle & solution. Ensure solution matches puzzle clues.
+Set these env variables for the backend (`.env` at project root):
+- `BLOCKCHAIN_RPC_URL` – JSON‑RPC endpoint (e.g., http://localhost:8545)
+- `VERIFIER_CONTRACT_ADDRESS` – deployed `Groth16Verifier` address
+- `CONSUMER_CONTRACT_ADDRESS` – deployed `SudokuVerifierConsumer` address
+- `CLIENT_URL` – allowed CORS origin for the UI (default http://localhost:3000)
 
-## Notes / Future Improvements
-- Optimized uniqueness via sum / sum-of-squares drastically reduces constraints vs pairwise inequality.
-- Could derive `clueFlags` internally (compare unsolved[i] != 0) to simplify public API.
-- Consider PLONK or HyperPlonk for universal setup.
-- Add Jest script to auto run witness/proof checks.
-- Provide Solidity verifier deployment script (Hardhat/Foundry).
-
-## Clean Build Artifacts
+## Circuit workflow (contributors)
+Common tasks to rebuild artifacts into `build/`:
 ```bash
-npm run clean
+# Powers of Tau (example ptau already included in build/)
+npm run setup       # compile circuit, contribute ptau, generate zkey, export vk
+npm run witness     # create build/witness.wtns for a given input
+npm run prove       # create build/proof.json and build/public.json
+npm run verify      # verify proof with verification key
+npm run verifier:sol# export contracts/Verifier.sol
 ```
 
----
-Educational demo; not audited for production security.
+Artifacts in `build/`:
+- `sudoku.r1cs` – constraint system
+- `sudoku_js/` – `sudoku.wasm` and `witness_calculator.js`
+- `sudoku_0000.zkey` – proving key
+- `verification_key.json` – verification key
+- `proof.json`, `public.json` – sample proof and public signals
+
+## Directory structure
+```
+circuits/     Circom circuit (`sudoku.circom`)
+client/       React app; generates witness/proof with snarkjs in browser
+server/       Express API; puzzle generation, validation, blockchain helpers
+contracts/    Solidity verifier + consumer storage/validation wrapper
+build/        Generated artifacts (wasm, zkey, vk, r1cs, proofs)
+input/        Example input for circuit
+migrations/   Truffle migration scripts
+scripts/      Developer scripts (web3 test, dependency checks)
+test/         Truffle tests
+```
+
+## Troubleshooting
+- Proof generation stuck or errors in browser
+  - Ensure `snarkjs` script loads (network access). The UI shows status badges.
+  - Files `sudoku.wasm` and `sudoku.zkey` must be available under `client/public/`.
+- “Blockchain not available” or submission fails
+  - Start a local chain (e.g., Ganache/Anvil/Hardhat node).
+  - Set contract addresses in `.env`; restart the server.
+- Invalid solution
+  - The server can validate your solution via `/api/validate-solution` and show specific rule errors.
+
+## FAQ
+- Does the contract know my solution?
+  - No. Only the proof and public puzzle data are submitted. The solution remains private.
+- Why sums and sum‑of‑squares instead of pairwise inequality constraints?
+  - It’s more efficient: fewer constraints while still enforcing permutation of 1..9.
+- Can I use a different proving system?
+  - Yes, the architecture can adapt to PLONK/HyperPlonk with different verifier contracts.
+
+## Security & notes
+This is an educational demo and has not been audited. Do not use in production without comprehensive review.
+
+## Acknowledgments
+- Circom and snarkjs (iden3 team)
+- Open‑source ZK community
+
