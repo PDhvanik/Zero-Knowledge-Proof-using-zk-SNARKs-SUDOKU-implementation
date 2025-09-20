@@ -9,7 +9,8 @@ const steps = [
   { label: "Generate Witness", desc: "Generate a witness file off-chain using WASM." },
   { label: "Generate Proof", desc: "Generate the zk-SNARK proof using snarkjs." },
   { label: "Submit Proof", desc: "Send the proof and inputs to the smart contract." },
-  { label: "View On-Chain Record", desc: "See the verification result stored on the blockchain." }
+  { label: "View On-Chain Record", desc: "See the verification result stored on the blockchain." },
+  { label: "Summary", desc: "Overview of the entire process and data." }
 ];
 
 const difficulties = [
@@ -109,6 +110,14 @@ const StatusDisplay = ({ error, loading, txHash, success }) => (
   </>
 );
 
+// A compact helper to show short theory/explanation for each step
+const InfoNote = ({ title, children }) => (
+  <div className="mb-4 p-4 rounded-lg border bg-yellow-50 border-yellow-200">
+    <h5 className="font-semibold text-yellow-800">{title}</h5>
+    <div className="mt-1 text-sm text-yellow-900 space-y-1">{children}</div>
+  </div>
+);
+
 const DifficultySelector = ({ selectedDifficulty, onDifficultyChange, disabled }) => (
   <div className="mb-6">
     <h4 className="text-lg font-semibold mb-3">Select Difficulty</h4>
@@ -131,17 +140,68 @@ const DifficultySelector = ({ selectedDifficulty, onDifficultyChange, disabled }
   </div>
 );
 
-const DataDisplayCard = ({ title, description, data }) => (
-  <div className="mt-6 bg-gray-50 p-4 rounded-lg border shadow-inner">
-    <h5 className="text-lg font-semibold text-gray-800">{title}</h5>
-    <p className="text-sm text-gray-600 mb-2">{description}</p>
-    <pre className="bg-gray-900 text-white text-xs p-3 rounded-md overflow-x-auto">
-      {JSON.stringify(data, (key, value) =>
-        typeof value === 'bigint' ? value.toString() : value,
-        2)}
-    </pre>
-  </div>
-);
+const DataDisplayCard = ({ title, description, data }) => {
+  const replacer = (key, value) => (typeof value === 'bigint' ? value.toString() : value);
+
+  const getEntries = (d) => {
+    if (d && typeof d === 'object' && !Array.isArray(d)) return Object.entries(d);
+    if (Array.isArray(d)) return d.map((v, i) => [i, v]);
+    return [['value', d]];
+  };
+
+  const summarize = (v) => {
+    if (Array.isArray(v)) return `[${v.length} items]`;
+    if (v && typeof v === 'object') return `{${Object.keys(v).length} keys}`;
+    if (typeof v === 'string') return v.length > 80 ? v.slice(0, 77) + '...' : v;
+    if (typeof v === 'bigint') return v.toString();
+    return String(v);
+  };
+
+  const renderValue = (v) => {
+    const isComplex = v && typeof v === 'object';
+    if (!isComplex) {
+      const full = typeof v === 'string' ? v : JSON.stringify(v, replacer);
+      return (
+        <span className="font-mono text-xs text-gray-800 block truncate" title={full}>
+          {summarize(v)}
+        </span>
+      );
+    }
+
+    const preview = summarize(v);
+    return (
+      <details className="group">
+        <summary className="cursor-pointer select-none list-none flex items-center gap-2 text-gray-800">
+          <span className="inline-block px-1.5 py-0.5 bg-gray-200 rounded text-[10px] font-mono">
+            {preview}
+          </span>
+          <span className="text-[10px] text-blue-600 group-open:hidden">show</span>
+          <span className="text-[10px] text-blue-600 hidden group-open:inline">hide</span>
+        </summary>
+        <pre className="mt-1 bg-gray-900 text-white text-[10px] p-2 rounded max-h-40 overflow-auto">
+          {JSON.stringify(v, replacer, 2)}
+        </pre>
+      </details>
+    );
+  };
+
+  const entries = getEntries(data);
+
+  return (
+    <div className="mt-6 bg-gray-50 p-4 rounded-lg border shadow-inner">
+      <h5 className="text-lg font-semibold text-gray-800">{title}</h5>
+      <p className="text-sm text-gray-600 mb-2">{description}</p>
+      <div className="divide-y divide-gray-200">
+        {entries.map(([k, v], idx) => (
+          <div key={idx} className="py-2 flex items-start gap-3">
+            <span className="w-40 shrink-0 text-xs font-semibold text-gray-600 break-all">{String(k)}</span>
+            <div className="flex-1 min-w-0">{renderValue(v)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+};
 
 // --- Main App Component ---
 function App() {
@@ -439,7 +499,7 @@ function App() {
       setTxHash(data.txHash);
       setProofRecord(data);
       setStep(6); // Move to step 6 (View Record)
-      setSuccess('Proof submitted successfully to blockchain');
+      setSuccess('Proof verified and submitted successfully to blockchain');
 
     } catch (error) {
       console.error('Proof submission failed:', error);
@@ -483,6 +543,13 @@ function App() {
         return (
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 1: Select Difficulty</h4>
+            <InfoNote title="What happens in this step?">
+              <ul className="list-disc pl-5">
+                <li>Choose how many clues you want. Fewer clues = harder puzzle.</li>
+                <li>We ask the backend to generate a valid Sudoku with your chosen difficulty.</li>
+                <li>Outputs: a puzzle grid, the full solution (kept client-side), and clue flags.</li>
+              </ul>
+            </InfoNote>
             <DifficultySelector
               selectedDifficulty={difficulty}
               onDifficultyChange={setDifficulty}
@@ -505,9 +572,13 @@ function App() {
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 2: Solve the Puzzle</h4>
             <div className="mb-4">
-              <p className="text-gray-600 mb-2">
-                Fill in the empty cells with numbers 1-9.
-              </p>
+              <InfoNote title="Your duty in this step">
+                <ul className="list-disc pl-5">
+                  <li>Fill all 81 cells using digits 1-9 without breaking Sudoku rules.</li>
+                  <li>Rows, columns, and 3x3 boxes must contain all digits 1-9 exactly once.</li>
+                  <li>Clue cells are fixed; only fill the empty ones.</li>
+                </ul>
+              </InfoNote>
               <div className="flex gap-2 mb-4">
                 <ActionButton onClick={handleAutoFill} variant="secondary" disabled={loading}>
                   Auto-Fill (Testing)
@@ -544,9 +615,13 @@ function App() {
         return (
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 3: Generate Witness</h4>
-            <p className="text-gray-600 mb-4">
-              The next step is to generate a witness using your solved puzzle. This is a private input for the ZK circuit.
-            </p>
+            <InfoNote title="Why witness generation?">
+              <ul className="list-disc pl-5">
+                <li>The witness is the private input proving you solved the puzzle correctly.</li>
+                <li>We run a WASM circuit in your browser to compute cryptographic signals from your solution.</li>
+                <li>Your actual solution never needs to be shared with anyone.</li>
+              </ul>
+            </InfoNote>
             <ActionButton
               onClick={handleGenerateWitness}
               disabled={loading}
@@ -561,9 +636,13 @@ function App() {
         return (
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 4: Generate Proof</h4>
-            <p className="text-gray-600 mb-4">
-              The witness has been generated. Now we'll create the zero-knowledge proof.
-            </p>
+            <InfoNote title="What is being proven?">
+              <ul className="list-disc pl-5">
+                <li>Using Groth16 (via snarkjs), we create a short proof that your witness satisfies the Sudoku rules.</li>
+                <li>Proof includes elements a, b, c and a set of public signals derived from the puzzle.</li>
+                <li>No secrets leak: verifiers learn validity, not your solution.</li>
+              </ul>
+            </InfoNote>
             <ActionButton
               onClick={handleGenerateProof}
               disabled={loading || !snarkjsLoaded}
@@ -585,9 +664,13 @@ function App() {
         return (
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 5: Submit Proof to Blockchain</h4>
-            <p className="text-gray-600 mb-4">
-              The proof will now be submitted to the blockchain for on-chain verification.
-            </p>
+            <InfoNote title="What submission does">
+              <ul className="list-disc pl-5">
+                <li>We send the proof (a, b, c) and public signals to a verifier smart contract.</li>
+                <li>The contract checks validity on-chain; only a boolean result is stored.</li>
+                <li>Costs: small gas fee for verification; data kept minimal.</li>
+              </ul>
+            </InfoNote>
             <ActionButton
               onClick={handleSubmitProof}
               disabled={loading}
@@ -609,15 +692,22 @@ function App() {
         return (
           <div>
             <h4 className="text-2xl font-bold mb-4">Step 6: Verification Complete</h4>
-            <p className="text-gray-600 mb-4">
-              Your proof has been successfully verified and recorded on the blockchain!
-            </p>
+            <InfoNote title="What you get here">
+              <ul className="list-disc pl-5">
+                <li>Result of the on-chain verification and a transaction hash for auditing.</li>
+                <li>You can use the hash to inspect the transaction on a block explorer.</li>
+                <li>At this point, your solution was never revealed, only its validity.</li>
+              </ul>
+            </InfoNote>
             <div className="flex gap-4">
               <ActionButton onClick={resetState}>
                 Start Over
               </ActionButton>
               <ActionButton onClick={() => fetchPuzzle(difficulty)} variant="secondary">
                 New Puzzle
+              </ActionButton>
+              <ActionButton onClick={() => setStep(7)} variant="success">
+                View Summary
               </ActionButton>
             </div>
             {proofRecord && (
@@ -627,6 +717,115 @@ function App() {
                 data={proofRecord}
               />
             )}
+          </div>
+        );
+
+      case 7:
+        return (
+          <div>
+            <h4 className="text-2xl font-bold mb-2">Step 7: End-to-End Summary</h4>
+            <InfoNote title="How everything fits together">
+              <ul className="list-disc pl-5">
+                <li>Pick a puzzle ➜ solve ➜ derive witness ➜ generate ZK proof ➜ verify on-chain.</li>
+                <li>Privacy: your exact solution stays local; only correctness is shared.</li>
+                <li>Reproducibility: with the same inputs, anyone can re-verify your proof.</li>
+              </ul>
+            </InfoNote>
+
+            {/* Visual Flow */}
+            <div className="mb-6">
+              <div className="flex flex-col md:flex-row items-stretch md:items-center gap-3">
+                <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-blue-600 text-white text-xs font-bold rounded-full">1</span>
+                  <span className="text-sm font-semibold text-blue-700">Select Difficulty</span>
+                </div>
+                <div className="hidden md:block text-gray-400">➔</div>
+                <div className="flex items-center gap-2 bg-indigo-50 border border-indigo-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-indigo-600 text-white text-xs font-bold rounded-full">2</span>
+                  <span className="text-sm font-semibold text-indigo-700">Solve Puzzle</span>
+                </div>
+                <div className="hidden md:block text-gray-400">➔</div>
+                <div className="flex items-center gap-2 bg-purple-50 border border-purple-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-purple-600 text-white text-xs font-bold rounded-full">3</span>
+                  <span className="text-sm font-semibold text-purple-700">Generate Witness</span>
+                </div>
+                <div className="hidden md:block text-gray-400">➔</div>
+                <div className="flex items-center gap-2 bg-pink-50 border border-pink-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-pink-600 text-white text-xs font-bold rounded-full">4</span>
+                  <span className="text-sm font-semibold text-pink-700">Generate Proof</span>
+                </div>
+                <div className="hidden md:block text-gray-400">➔</div>
+                <div className="flex items-center gap-2 bg-green-50 border border-green-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-green-600 text-white text-xs font-bold rounded-full">5</span>
+                  <span className="text-sm font-semibold text-green-700">Submit Proof</span>
+                </div>
+                <div className="hidden md:block text-gray-400">➔</div>
+                <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 p-2 rounded">
+                  <span className="w-6 h-6 flex items-center justify-center bg-emerald-600 text-white text-xs font-bold rounded-full">6</span>
+                  <span className="text-sm font-semibold text-emerald-700">On-Chain Record</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Quick Facts */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 rounded-lg border bg-white">
+                <div className="text-sm text-gray-500">Difficulty</div>
+                <div className="text-lg font-semibold">{difficulty}</div>
+              </div>
+              <div className="p-4 rounded-lg border bg-white">
+                <div className="text-sm text-gray-500">API</div>
+                <div className={`text-lg font-semibold ${apiStatus.healthy ? 'text-green-700' : 'text-red-700'}`}>
+                  {apiStatus.healthy ? 'Connected' : 'Disconnected'}
+                </div>
+              </div>
+              <div className="p-4 rounded-lg border bg-white">
+                <div className="text-sm text-gray-500">Blockchain</div>
+                <div className={`text-lg font-semibold ${apiStatus.blockchain ? 'text-green-700' : 'text-yellow-700'}`}>
+                  {apiStatus.blockchain ? 'Connected' : 'Offline'}
+                </div>
+              </div>
+            </div>
+
+            {/* Data Sections */}
+            {circuitInput && (
+              <DataDisplayCard
+                title="Circuit Input Snapshot"
+                description="Unsolved puzzle, clue flags, and your solved grid used to generate the witness."
+                data={{
+                  unsolved: circuitInput.unsolved,
+                  clueFlags: circuitInput.clueFlags,
+                  solved: circuitInput.solved,
+                }}
+              />
+            )}
+
+            {proofData && (
+              <DataDisplayCard
+                title="Proof Summary"
+                description="Groth16 proof elements and public signals prepared for submission."
+                data={{
+                  a: proofData.a,
+                  b: proofData.b,
+                  c: proofData.c,
+                  publicSignals: proofData.publicSignals,
+                }}
+              />
+            )}
+
+            {(txHash || proofRecord) && (
+              <DataDisplayCard
+                title="On-Chain Summary"
+                description="Transaction details as reported by the backend after on-chain verification."
+                data={{ txHash, ...((proofRecord || {})) }}
+              />
+            )}
+
+            {/* Actions */}
+            <div className="mt-4 flex gap-3">
+              <ActionButton onClick={resetState}>Start Over</ActionButton>
+              <ActionButton onClick={() => fetchPuzzle(difficulty)} variant="secondary">New Puzzle</ActionButton>
+            </div>
           </div>
         );
 
